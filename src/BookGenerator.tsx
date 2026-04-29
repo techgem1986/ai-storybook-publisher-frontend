@@ -3,8 +3,13 @@ import { LinearProgress, Box, Typography } from '@mui/material';
 
 export default function BookGenerator() {
   const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [ageGroup, setAgeGroup] = useState('5-8 year old');
+  const [writingStyle, setWritingStyle] = useState('happy and magical');
+  const [numberOfPages, setNumberOfPages] = useState(5);
   const [loading, setLoading] = useState(false);
   const [generatedBook, setGeneratedBook] = useState<any>(null);
+  const [editingBook, setEditingBook] = useState<any>(null);
   const [books, setBooks] = useState<any[]>([]);
   const [booksLoading, setBooksLoading] = useState(false);
   const [liveStatuses, setLiveStatuses] = useState<{[key: string]: string}>({});
@@ -13,7 +18,8 @@ export default function BookGenerator() {
     if (!status) {
       if (pdfStatus === 'IN_PROGRESS') return 92;
       if (bookStatus === 'COMPLETED') return 90;
-      if (bookStatus === 'GENERATING') return 15;
+      if (bookStatus === 'GENERATING') return 25;
+      if (bookStatus === 'DRAFTING') return 10;
       if (bookStatus === 'PENDING') return 5;
       return 0;
     }
@@ -27,32 +33,36 @@ export default function BookGenerator() {
     if (s.includes('error') || s.includes('failed')) return 0;
     
     // PDF stage
-    if (s.includes('adding page 5') && s.includes('to pdf')) return 98;
-    if (s.includes('adding page 4') && s.includes('to pdf')) return 97;
-    if (s.includes('adding page 3') && s.includes('to pdf')) return 96;
-    if (s.includes('adding page 2') && s.includes('to pdf')) return 95;
-    if (s.includes('adding page 1') && s.includes('to pdf')) return 94;
+    const pdfMatch = s.match(/adding page (\d+) of (\d+) to pdf/);
+    if (pdfMatch) {
+      const current = parseInt(pdfMatch[1]);
+      const total = parseInt(pdfMatch[2]);
+      return 92 + (current / total) * 8;
+    }
     if (s.includes('pdf creation') || s.includes('starting pdf') || s.includes('into a pdf') || s.includes('wrapping up')) return 92;
     if (s.includes('story content ready')) return 90;
     
     // Illustrations
-    if (s.includes('illustration for page 5')) return 85;
-    if (s.includes('illustration for page 4')) return 70;
-    if (s.includes('illustration for page 3')) return 55;
-    if (s.includes('illustration for page 2')) return 40;
-    if (s.includes('illustration for page 1')) return 25;
-    if (s.includes('creating magical illustrations')) return 20;
+    const illusMatch = s.match(/illustration for page (\d+) of (\d+)/);
+    if (illusMatch) {
+      const current = parseInt(illusMatch[1]);
+      const total = parseInt(illusMatch[2]);
+      return 25 + (current / total) * 65;
+    }
+    if (s.includes('creating magical illustrations') || s.includes('starting magical illustrations')) return 25;
     
     // Initial stages
+    if (s.includes('story draft ready')) return 20;
     if (s.includes('story text generated')) return 15;
-    if (s.includes('generating story content')) return 8;
+    if (s.includes('generating story text') || s.includes('generating story content')) return 8;
     if (s.includes('started')) return 5;
     
     // Fallbacks
     if (s.includes('connected to status updates')) {
       if (pdfStatus === 'IN_PROGRESS') return 92;
       if (bookStatus === 'COMPLETED') return 90;
-      if (bookStatus === 'GENERATING') return 15;
+      if (bookStatus === 'GENERATING') return 25;
+      if (bookStatus === 'DRAFTING') return 10;
       return 2;
     }
     
@@ -71,8 +81,8 @@ export default function BookGenerator() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query: `
-            mutation GenerateStoryBook($title: String!) {
-              generateStoryBook(title: $title) {
+            mutation GenerateStoryDraft($title: String!, $description: String, $ageGroup: String, $writingStyle: String, $numberOfPages: Int) {
+              generateStoryDraft(title: $title, description: $description, ageGroup: $ageGroup, writingStyle: $writingStyle, numberOfPages: $numberOfPages) {
                 id
                 title
                 status
@@ -82,13 +92,19 @@ export default function BookGenerator() {
               }
             }
           `,
-          variables: { title: title.trim() }
+          variables: { 
+            title: title.trim(),
+            description: description.trim(),
+            ageGroup: ageGroup,
+            writingStyle: writingStyle,
+            numberOfPages: numberOfPages
+          }
         })
       });
 
       const result = await response.json();
       if (result.data) {
-        const newBook = result.data.generateStoryBook;
+        const newBook = result.data.generateStoryDraft;
         setGeneratedBook(newBook);
         // Pre-emptively add to live statuses
         setLiveStatuses(prev => ({
@@ -194,6 +210,100 @@ export default function BookGenerator() {
     }
   };
 
+  const startReview = async (id: string) => {
+    try {
+      const response = await fetch('http://localhost:8080/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: `
+            query GetStoryBook($id: ID!) {
+              getStoryBook(id: $id) {
+                id
+                title
+                fontColor
+                fontSize
+                fontStyle
+                textBackground
+                pages {
+                  pageNumber
+                  text
+                }
+              }
+            }
+          `,
+          variables: { id }
+        })
+      });
+      const result = await response.json();
+      if (result.data) {
+        const book = result.data.getStoryBook;
+        setEditingBook({
+          ...book,
+          fontColor: book.fontColor || '#000000',
+          fontSize: book.fontSize || 18,
+          fontStyle: book.fontStyle || 'HELVETICA',
+          textBackground: book.textBackground || 'TRANSPARENT'
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching book for review:', error);
+    }
+  };
+
+  const finalizeBook = async () => {
+    if (!editingBook) return;
+    setLoading(true);
+    try {
+      // 1. Update content
+      await fetch('http://localhost:8080/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: `
+            mutation UpdateStoryContent($id: ID!, $pages: [StoryPageInput!]!, $fontColor: String, $fontSize: Int, $fontStyle: String, $textBackground: String) {
+              updateStoryContent(id: $id, pages: $pages, fontColor: $fontColor, fontSize: $fontSize, fontStyle: $fontStyle, textBackground: $textBackground) {
+                id
+              }
+            }
+          `,
+          variables: {
+            id: editingBook.id,
+            pages: editingBook.pages.map((p: any) => ({ pageNumber: p.pageNumber, text: p.text })),
+            fontColor: editingBook.fontColor,
+            fontSize: editingBook.fontSize,
+            fontStyle: editingBook.fontStyle,
+            textBackground: editingBook.textBackground
+          }
+        })
+      });
+
+      // 2. Finalize
+      await fetch('http://localhost:8080/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: `
+            mutation FinalizeAndGenerateImages($id: ID!) {
+              finalizeAndGenerateImages(id: $id) {
+                id
+                status
+              }
+            }
+          `,
+          variables: { id: editingBook.id }
+        })
+      });
+      
+      setEditingBook(null);
+      fetchBooks();
+    } catch (error) {
+      console.error('Error finalizing book:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
 
   useEffect(() => {
     fetchBooks();
@@ -257,23 +367,151 @@ export default function BookGenerator() {
     };
   }, [activeBookIdsString, fetchBooks]);
 
+  const getStatusBackground = (status: string) => {
+    switch(status) {
+      case 'COMPLETED': return '#dcfce7';
+      case 'GENERATING': return '#fef3c7';
+      case 'REVIEW_PENDING': return '#e0e7ff';
+      case 'DRAFTING': return '#f3f4f6';
+      case 'FAILED': return '#fee2e2';
+      default: return '#f3f4f6';
+    }
+  };
+
   const getStatusColor = (status: string) => {
     switch(status) {
       case 'COMPLETED': return '#166534';
       case 'GENERATING': return '#92400e';
+      case 'REVIEW_PENDING': return '#4338ca';
+      case 'DRAFTING': return '#4b5563';
       case 'FAILED': return '#991b1b';
       default: return '#4b5563';
     }
   };
 
-  const getStatusBackground = (status: string) => {
-    switch(status) {
-      case 'COMPLETED': return '#dcfce7';
-      case 'GENERATING': return '#fef3c7';
-      case 'FAILED': return '#fee2e2';
-      default: return '#f3f4f6';
-    }
-  };
+  if (editingBook) {
+    return (
+      <div style={{ maxWidth: '800px', margin: '40px auto', padding: '20px' }}>
+        <h1 style={{ color: '#6366f1', textAlign: 'center', marginBottom: '30px' }}>
+          📝 Review & Edit Story
+        </h1>
+        
+        <div style={{
+          background: 'white',
+          borderRadius: '16px',
+          padding: '30px',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
+          marginBottom: '30px'
+        }}>
+          <h2 style={{ fontSize: '20px', marginBottom: '20px', color: '#1f2937' }}>{editingBook.title}</h2>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '30px', backgroundColor: '#f9fafb', padding: '20px', borderRadius: '12px' }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Font Color</label>
+              <input 
+                type="color" 
+                value={editingBook.fontColor} 
+                onChange={(e) => setEditingBook({...editingBook, fontColor: e.target.value})}
+                style={{ width: '100%', height: '40px', padding: '2px', borderRadius: '4px', border: '1px solid #d1d5db' }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Font Size</label>
+              <input 
+                type="number" 
+                value={editingBook.fontSize} 
+                onChange={(e) => setEditingBook({...editingBook, fontSize: parseInt(e.target.value) || 18})}
+                style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #d1d5db' }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Font Style</label>
+              <select 
+                value={editingBook.fontStyle}
+                onChange={(e) => setEditingBook({...editingBook, fontStyle: e.target.value})}
+                style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #d1d5db' }}
+              >
+                <option value="HELVETICA">Helvetica</option>
+                <option value="HELVETICA_BOLD">Helvetica Bold</option>
+                <option value="TIMES_ROMAN">Times Roman</option>
+                <option value="COURIER">Courier</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Text Background</label>
+              <select 
+                value={editingBook.textBackground}
+                onChange={(e) => setEditingBook({...editingBook, textBackground: e.target.value})}
+                style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #d1d5db' }}
+              >
+                <option value="TRANSPARENT">Transparent</option>
+                <option value="WHITE">White Box</option>
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gap: '20px' }}>
+            {editingBook.pages.map((page: any, index: number) => (
+              <div key={index} style={{ border: '1px solid #e5e7eb', padding: '15px', borderRadius: '8px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#6366f1' }}>Page {page.pageNumber}</label>
+                <textarea
+                  value={page.text}
+                  onChange={(e) => {
+                    const newPages = [...editingBook.pages];
+                    newPages[index] = { ...page, text: e.target.value };
+                    setEditingBook({ ...editingBook, pages: newPages });
+                  }}
+                  style={{
+                    width: '100%',
+                    minHeight: '80px',
+                    padding: '12px',
+                    borderRadius: '6px',
+                    border: '1px solid #d1d5db',
+                    fontFamily: 'inherit',
+                    fontSize: '15px'
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', gap: '15px', marginTop: '30px' }}>
+            <button
+              onClick={() => setEditingBook(null)}
+              style={{
+                flex: 1,
+                padding: '14px',
+                borderRadius: '8px',
+                border: '1px solid #d1d5db',
+                backgroundColor: 'white',
+                color: '#374151',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={finalizeBook}
+              disabled={loading}
+              style={{
+                flex: 2,
+                padding: '14px',
+                borderRadius: '8px',
+                border: 'none',
+                backgroundColor: '#6366f1',
+                color: 'white',
+                fontWeight: 600,
+                cursor: loading ? 'not-allowed' : 'pointer'
+              }}
+            >
+              {loading ? 'Processing...' : '🚀 Generate Pages & Illustrations'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '600px', margin: '40px auto', padding: '20px' }}>
@@ -302,11 +540,96 @@ export default function BookGenerator() {
             borderRadius: '8px',
             border: '2px solid #e5e7eb',
             fontSize: '16px',
-            marginBottom: '20px',
+            marginBottom: '16px',
             boxSizing: 'border-box'
           }}
-          onKeyPress={(e) => e.key === 'Enter' && generateBook()}
         />
+
+        <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, color: '#374151' }}>
+          Short Description
+        </label>
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="What is the story about?"
+          style={{
+            width: '100%',
+            padding: '14px 16px',
+            borderRadius: '8px',
+            border: '2px solid #e5e7eb',
+            fontSize: '16px',
+            marginBottom: '16px',
+            minHeight: '80px',
+            fontFamily: 'inherit',
+            boxSizing: 'border-box'
+          }}
+        />
+
+        <div style={{ display: 'flex', gap: '16px', marginBottom: '16px' }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, color: '#374151' }}>
+              Age Group
+            </label>
+            <select
+              value={ageGroup}
+              onChange={(e) => setAgeGroup(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '14px 16px',
+                borderRadius: '8px',
+                border: '2px solid #e5e7eb',
+                fontSize: '16px',
+                backgroundColor: 'white'
+              }}
+            >
+              <option value="2-4 year old">2-4 years</option>
+              <option value="5-8 year old">5-8 years</option>
+              <option value="9-12 year old">9-12 years</option>
+            </select>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, color: '#374151' }}>
+              Pages
+            </label>
+            <input
+              type="number"
+              min="1"
+              max="10"
+              value={numberOfPages}
+              onChange={(e) => setNumberOfPages(parseInt(e.target.value) || 5)}
+              style={{
+                width: '100%',
+                padding: '14px 16px',
+                borderRadius: '8px',
+                border: '2px solid #e5e7eb',
+                fontSize: '16px',
+                boxSizing: 'border-box'
+              }}
+            />
+          </div>
+        </div>
+
+        <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, color: '#374151' }}>
+          Writing Style
+        </label>
+        <select
+          value={writingStyle}
+          onChange={(e) => setWritingStyle(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '14px 16px',
+            borderRadius: '8px',
+            border: '2px solid #e5e7eb',
+            fontSize: '16px',
+            marginBottom: '24px',
+            backgroundColor: 'white'
+          }}
+        >
+          <option value="happy and magical">Happy and Magical</option>
+          <option value="adventurous and exciting">Adventurous and Exciting</option>
+          <option value="educational and simple">Educational and Simple</option>
+          <option value="bedtime story and calm">Bedtime Story and Calm</option>
+        </select>
 
         <button
           onClick={generateBook}
@@ -383,7 +706,7 @@ export default function BookGenerator() {
       </div>
 
       <p style={{ textAlign: 'center', color: '#6b7280', marginTop: '20px', fontSize: '14px' }}>
-        Generates 5 illustrated pages for children 5-8 years old
+        Generates {numberOfPages} illustrated pages for children {ageGroup}
       </p>
 
       {/* Generated Books List Section */}
@@ -399,14 +722,14 @@ export default function BookGenerator() {
         ) : (
           <>
             {/* Active Generations Section */}
-            {books.some(b => (b.status === 'GENERATING' || b.status === 'PENDING' || b.pdfStatus === 'IN_PROGRESS' || (b.status === 'COMPLETED' && b.pdfStatus === 'NOT_STARTED')) && b.status !== 'FAILED' && b.pdfStatus !== 'FAILED' && b.pdfStatus !== 'COMPLETED') && (
+            {books.some(b => (b.status === 'GENERATING' || b.status === 'PENDING' || b.status === 'DRAFTING' || b.status === 'REVIEW_PENDING' || b.pdfStatus === 'IN_PROGRESS' || (b.status === 'COMPLETED' && b.pdfStatus === 'NOT_STARTED')) && b.status !== 'FAILED' && b.pdfStatus !== 'FAILED' && b.pdfStatus !== 'COMPLETED') && (
               <div style={{ marginBottom: '30px' }}>
                 <h3 style={{ fontSize: '16px', color: '#6366f1', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span className="animate-spin">⚙️</span> Active Generations
                 </h3>
                 <div style={{ display: 'grid', gap: '16px' }}>
                   {books
-                    .filter(b => (b.status === 'GENERATING' || b.status === 'PENDING' || b.pdfStatus === 'IN_PROGRESS' || (b.status === 'COMPLETED' && b.pdfStatus === 'NOT_STARTED')) && b.status !== 'FAILED' && b.pdfStatus !== 'FAILED' && b.pdfStatus !== 'COMPLETED')
+                    .filter(b => (b.status === 'GENERATING' || b.status === 'PENDING' || b.status === 'DRAFTING' || b.status === 'REVIEW_PENDING' || b.pdfStatus === 'IN_PROGRESS' || (b.status === 'COMPLETED' && b.pdfStatus === 'NOT_STARTED')) && b.status !== 'FAILED' && b.pdfStatus !== 'FAILED' && b.pdfStatus !== 'COMPLETED')
                     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
                     .map((book) => renderBookItem(book))}
                 </div>
@@ -463,7 +786,8 @@ export default function BookGenerator() {
   function renderBookItem(book: any) {
     const isFailed = book.status === 'FAILED' || book.pdfStatus === 'FAILED' || (book.lastStatus && book.lastStatus.toLowerCase().includes('error'));
     const isCompleted = book.status === 'COMPLETED' && book.pdfStatus === 'COMPLETED';
-    const showProgress = !isFailed && !isCompleted;
+    const isReviewPending = book.status === 'REVIEW_PENDING';
+    const showProgress = !isFailed && !isCompleted && !isReviewPending;
 
     return (
       <div key={book.id} style={{
@@ -476,7 +800,7 @@ export default function BookGenerator() {
         alignItems: 'center',
         flexWrap: 'wrap',
         gap: '12px',
-        borderLeft: isCompleted ? '4px solid #10b981' : (isFailed ? '4px solid #ef4444' : '4px solid #6366f1')
+        borderLeft: isCompleted ? '4px solid #10b981' : (isFailed ? '4px solid #ef4444' : (isReviewPending ? '4px solid #6366f1' : '4px solid #6366f1'))
       }}>
         <div style={{ flex: 1, minWidth: '200px' }}>
           <h3 style={{ margin: '0 0 8px 0', color: '#1f2937' }}>{book.title}</h3>
@@ -491,6 +815,23 @@ export default function BookGenerator() {
             }}>
               {book.status}
             </span>
+            {isReviewPending && (
+              <button
+                onClick={() => startReview(book.id)}
+                style={{
+                  padding: '4px 12px',
+                  borderRadius: '20px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  backgroundColor: '#6366f1',
+                  color: 'white',
+                  border: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                📝 Review & Edit Story
+              </button>
+            )}
             {book.status === 'COMPLETED' && book.pdfStatus === 'NOT_STARTED' && (
               <span style={{ fontSize: '12px', color: '#9ca3af' }}>
                 PDF Queued...
