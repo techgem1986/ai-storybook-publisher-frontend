@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, ChangeEvent } from 'react';
+import { StoryBook } from './types';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
 import { Progress } from './components/ui/progress';
@@ -15,13 +16,15 @@ export default function BookGenerator() {
   const [description, setDescription] = useState('');
   const [ageGroup, setAgeGroup] = useState('5-8 year old');
   const [writingStyle, setWritingStyle] = useState('happy and magical');
+  const [illustrationStyle, setIllustrationStyle] = useState('storybook watercolor');
   const [numberOfPages, setNumberOfPages] = useState(5);
   const [loading, setLoading] = useState(false);
-  const [generatedBook, setGeneratedBook] = useState<any>(null);
+  const [generatedBook, setGeneratedBook] = useState<StoryBook | null>(null);
   const [editingBook, setEditingBook] = useState<any>(null);
-  const [books, setBooks] = useState<any[]>([]);
+  const [books, setBooks] = useState<StoryBook[]>([]);
   const [booksLoading, setBooksLoading] = useState(false);
   const [liveStatuses, setLiveStatuses] = useState<{ [key: string]: string }>({});
+  const [regeneratingPages, setRegeneratingPages] = useState<Record<number, boolean>>({});
 
   const calculateProgress = (status: string, bookStatus?: string, pdfStatus?: string) => {
     if (!status) {
@@ -90,8 +93,8 @@ export default function BookGenerator() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query: `
-            mutation GenerateStoryDraft($title: String!, $description: String, $ageGroup: String, $writingStyle: String, $numberOfPages: Int) {
-              generateStoryDraft(title: $title, description: $description, ageGroup: $ageGroup, writingStyle: $writingStyle, numberOfPages: $numberOfPages) {
+            mutation GenerateStoryDraft($title: String!, $description: String, $ageGroup: String, $writingStyle: String, $illustrationStyle: String, $numberOfPages: Int) {
+              generateStoryDraft(title: $title, description: $description, ageGroup: $ageGroup, writingStyle: $writingStyle, illustrationStyle: $illustrationStyle, numberOfPages: $numberOfPages) {
                 id
                 title
                 status
@@ -106,6 +109,7 @@ export default function BookGenerator() {
             description: description.trim(),
             ageGroup: ageGroup,
             writingStyle: writingStyle,
+            illustrationStyle: illustrationStyle,
             numberOfPages: numberOfPages
           }
         })
@@ -145,6 +149,7 @@ export default function BookGenerator() {
                 status
                 pdfStatus
                 lastStatus
+                illustrationStyle
                 createdAt
               }
             }
@@ -230,13 +235,16 @@ export default function BookGenerator() {
               getStoryBook(id: $id) {
                 id
                 title
+                illustrationStyle
                 fontColor
                 fontSize
                 fontStyle
                 textBackground
+                lastStatus
                 pages {
                   pageNumber
                   text
+                  imageUrl
                 }
               }
             }
@@ -253,14 +261,54 @@ export default function BookGenerator() {
         setEditingBook({
           ...book,
           pages: sortedPages,
+          illustrationStyle: book.illustrationStyle || 'storybook watercolor',
           fontColor: book.fontColor || '#000000',
           fontSize: book.fontSize || 18,
           fontStyle: book.fontStyle || 'HELVETICA',
-          textBackground: book.textBackground || 'TRANSPARENT'
+          textBackground: book.textBackground || 'TRANSPARENT',
+          lastStatus: book.lastStatus || ''
         });
       }
     } catch (error) {
       console.error('Error fetching book for review:', error);
+    }
+  };
+
+  const regeneratePageImage = async (pageNumber: number) => {
+    if (!editingBook) return;
+    setRegeneratingPages(prev => ({ ...prev, [pageNumber]: true }));
+    try {
+      const response = await fetch('http://localhost:8080/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: `
+            mutation RegeneratePageImage($id: ID!, $pageNumber: Int!) {
+              regeneratePageImage(id: $id, pageNumber: $pageNumber) {
+                pageNumber
+                imageUrl
+                text
+              }
+            }
+          `,
+          variables: { id: editingBook.id, pageNumber }
+        })
+      });
+      const result = await response.json();
+      if (result.data) {
+        const updatedPage = result.data.regeneratePageImage;
+        setEditingBook((current: any) => {
+          if (!current) return current;
+          const pages = current.pages.map((page: any) =>
+            page.pageNumber === updatedPage.pageNumber ? { ...page, imageUrl: updatedPage.imageUrl, text: updatedPage.text } : page
+          );
+          return { ...current, pages };
+        });
+      }
+    } catch (error) {
+      console.error('Error regenerating page image:', error);
+    } finally {
+      setRegeneratingPages(prev => ({ ...prev, [pageNumber]: false }));
     }
   };
 
@@ -274,9 +322,10 @@ export default function BookGenerator() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query: `
-            mutation UpdateStoryContent($id: ID!, $pages: [StoryPageInput!]!, $fontColor: String, $fontSize: Int, $fontStyle: String, $textBackground: String) {
-              updateStoryContent(id: $id, pages: $pages, fontColor: $fontColor, fontSize: $fontSize, fontStyle: $fontStyle, textBackground: $textBackground) {
+            mutation UpdateStoryContent($id: ID!, $pages: [StoryPageInput!]!, $fontColor: String, $fontSize: Int, $fontStyle: String, $textBackground: String, $illustrationStyle: String) {
+              updateStoryContent(id: $id, pages: $pages, fontColor: $fontColor, fontSize: $fontSize, fontStyle: $fontStyle, textBackground: $textBackground, illustrationStyle: $illustrationStyle) {
                 id
+                lastStatus
               }
             }
           `,
@@ -286,7 +335,8 @@ export default function BookGenerator() {
             fontColor: editingBook.fontColor,
             fontSize: editingBook.fontSize,
             fontStyle: editingBook.fontStyle,
-            textBackground: editingBook.textBackground
+            textBackground: editingBook.textBackground,
+            illustrationStyle: editingBook.illustrationStyle
           }
         })
       });
@@ -443,12 +493,61 @@ export default function BookGenerator() {
                   </SelectContent>
                 </Select>
               </div>
+              <div>
+                <label className="block mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Illustration Style</label>
+                <Select
+                  value={editingBook.illustrationStyle}
+                  onValueChange={(value: string) => setEditingBook({ ...editingBook, illustrationStyle: value })}
+                >
+                  <SelectTrigger className="w-full bg-slate-700 border-slate-600 text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-800 border-slate-700 text-white">
+                    <SelectItem value="storybook watercolor">Storybook Watercolor</SelectItem>
+                    <SelectItem value="cartoon">Cartoon</SelectItem>
+                    <SelectItem value="digital flat">Digital Flat</SelectItem>
+                    <SelectItem value="paper-cut">Paper-Cut</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="mb-6 text-sm text-slate-300">
+              <p className="font-semibold text-slate-100">Review status</p>
+              <p>{editingBook.lastStatus || 'Your draft has been loaded. Edit text, regenerate page images, then finalize.'}</p>
             </div>
 
             <div className="grid gap-6">
               {editingBook.pages.map((page: any, index: number) => (
                 <div key={index} className="border border-slate-700 p-4 rounded-lg">
-                  <label className="block mb-2 font-bold text-cyan-vibrant">Page {page.pageNumber}</label>
+                  <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <label className="block font-bold text-cyan-vibrant">Page {page.pageNumber}</label>
+                    <Button
+                      variant="outline"
+                      onClick={() => regeneratePageImage(page.pageNumber)}
+                      disabled={regeneratingPages[page.pageNumber] || loading}
+                      className="text-xs px-3 py-2"
+                    >
+                      {regeneratingPages[page.pageNumber] ? (
+                        <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Regenerating</span>
+                      ) : (
+                        'Regenerate Image'
+                      )}
+                    </Button>
+                  </div>
+                  {page.imageUrl ? (
+                    <div className="mb-4 rounded-xl overflow-hidden border border-slate-700 bg-slate-950">
+                      <img
+                        src={page.imageUrl}
+                        alt={`Page ${page.pageNumber} illustration`}
+                        className="w-full h-56 object-cover"
+                      />
+                    </div>
+                  ) : (
+                    <div className="mb-4 flex h-56 items-center justify-center rounded-xl border border-dashed border-slate-600 bg-slate-900 text-slate-500">
+                      No illustration yet. Generate or regenerate this page.
+                    </div>
+                  )}
                   <Textarea
                     value={page.text}
                     onChange={(e: ChangeEvent<HTMLTextAreaElement>) => {
@@ -583,6 +682,22 @@ export default function BookGenerator() {
                   </SelectContent>
                 </Select>
               </div>
+              <div>
+                <label className="block mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+                  Illustration Style
+                </label>
+                <Select value={illustrationStyle} onValueChange={setIllustrationStyle}>
+                  <SelectTrigger className="bg-slate-800/50 border-white/10">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-900 border-white/10 text-white">
+                    <SelectItem value="storybook watercolor">Storybook Watercolor</SelectItem>
+                    <SelectItem value="cartoon">Cartoon</SelectItem>
+                    <SelectItem value="digital flat">Digital Flat</SelectItem>
+                    <SelectItem value="paper-cut">Paper-Cut</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
 
               <Button
                 onClick={generateBook}
@@ -706,6 +821,9 @@ export default function BookGenerator() {
               </Button>
             )}
             <span className="text-slate-500">ID: #{book.id}</span>
+            {book.illustrationStyle && (
+              <span className="text-slate-500">Style: {book.illustrationStyle}</span>
+            )}
             <span className="text-slate-500">{new Date(book.createdAt).toLocaleString()}</span>
           </div>
           {showProgress && (
