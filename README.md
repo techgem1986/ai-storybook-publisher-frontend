@@ -1,46 +1,62 @@
-# Getting Started with Create React App
+# Frontend Specification - AI Kid Storybook Publisher
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+## 1. System Overview
+A React-based single-page application (SPA) that provides a user-friendly interface for creating, editing, and downloading AI-generated children's storybooks.
 
-## Available Scripts
+## 2. Technology Stack
+- **Framework**: React 19 (TypeScript)
+- **Styling**: Tailwind CSS, PostCSS
+- **Component Libraries**: 
+  - **MUI (Material UI)**: Progress bars, sliders, basic layouts.
+  - **Radix UI**: Primitives for accessible UI components (Buttons, Cards, Progress).
+- **Icons**: Lucide React
+- **API Communication**: 
+  - **GraphQL**: Apollo Client or native `fetch` (current implementation uses native `fetch` with GraphQL JSON).
+  - **SSE**: Native `EventSource` for real-time status updates.
+- **Form Management**: React `useState` hooks.
+- **Build Tool**: Create React App (react-scripts).
 
-In the project directory, you can run:
+## 3. Key Components
+### BookGenerator (Main Page)
+- **Generator Form**: Inputs for `title`, `description` (prompt), `ageGroup` (dropdown), `writingStyle` (dropdown), and `numberOfPages` (slider).
+- **Generation Logic**: Toggle between "Quick Generate" (Auto) and "Create Draft" (Review first).
+- **Book List**: Grid of `StoryBookCard` components showing recent projects.
 
-### `npm start`
+### StoryBookCard
+- **Visuals**: Displays the book title and a progress bar.
+- **Progress Logic**: Interprets status strings from the backend to calculate a percentage (0-100%).
+  - *Drafting*: ~10%
+  - *Text Ready*: ~20%
+  - *Illustrations*: 25% to 90% (linear per page)
+  - *PDF Generation*: 92% to 100%
+- **Actions**: Download PDF (if complete), Edit (if draft), Delete.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+### StoryEditor (Modal/View)
+- **Interactive UI**: Preview of each page.
+- **Text Editing**: Users can refine the AI-generated text.
+- **Styling Panel**:
+  - Font Color Picker.
+  - Font Size Slider.
+  - Font Family Dropdown.
+  - Text Background Opacity/Style.
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+## 4. State Management & API Integration
+- **GraphQL Operations**:
+  - `GetAllStoryBooks`: Used on mount and after updates.
+  - `GenerateStoryDraft` / `GenerateStoryBook`: Triggered by the form.
+  - `UpdateStoryContent`: Saves user edits.
+  - `FinalizeAndGenerateImages`: Moves from draft to final.
+- **SSE Integration**:
+  - Establishes connection to `http://localhost:8080/api/status/{id}` when a book is in a non-final state.
+  - Updates the `liveStatuses` map in real-time.
 
-### `npm test`
+## 5. User Interface & Experience
+- **Responsive Design**: Mobile-friendly grid layouts.
+- **Loading States**: Skeletons or spinners during initial fetch.
+- **Real-time Feedback**: Dynamic progress bars and status text (e.g., "Creating illustration for page 3 of 10").
+- **Theme**: Light, clean aesthetic using Tailwind's `f8fafc` (Slate 50) background.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
-
-### `npm run build`
-
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
-
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
-
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
-
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
-
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
-
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
+## 6. Environment & Deployment
+- **Config**: `REACT_APP_API_URL` (points to backend GraphQL endpoint).
+- **Docker**: `Dockerfile` using Nginx to serve the production build.
+- **Port**: Default `3000` (dev) / `80` (prod).
