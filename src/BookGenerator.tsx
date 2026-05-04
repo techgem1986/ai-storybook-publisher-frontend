@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, ChangeEvent } from 'react';
+import StoryWizard from './StoryWizard';
 import { StoryBook } from './types';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
@@ -8,17 +9,11 @@ import { Textarea } from './components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card';
 import { Badge } from './components/ui/badge';
 import { motion } from 'framer-motion';
-import { Download, Trash2, Edit, Loader2, Rocket, Search, Library, Plus } from 'lucide-react';
+import { Download, Trash2, Edit, Loader2, Rocket, Search, Library, Plus, BookOpen, Sparkles } from 'lucide-react';
 import { cn } from './lib/utils';
 
 export default function BookGenerator() {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [ageGroup, setAgeGroup] = useState('5-8 year old');
-  const [writingStyle, setWritingStyle] = useState('happy and magical');
-  const [illustrationStyle, setIllustrationStyle] = useState('storybook watercolor');
-  const [numberOfPages, setNumberOfPages] = useState(5);
-  const [loading, setLoading] = useState(false);
+  const [showWizard, setShowWizard] = useState(false);
   const [generatedBook, setGeneratedBook] = useState<StoryBook | null>(null);
   const [editingBook, setEditingBook] = useState<any>(null);
   const [books, setBooks] = useState<StoryBook[]>([]);
@@ -83,54 +78,14 @@ export default function BookGenerator() {
     return 5; // Default low progress if status is unknown but truthy
   };
 
-  const generateBook = async () => {
-    if (!title.trim()) return;
-
-    setLoading(true);
-    try {
-      const response = await fetch('http://localhost:8080/graphql', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: `
-            mutation GenerateStoryDraft($title: String!, $description: String, $ageGroup: String, $writingStyle: String, $illustrationStyle: String, $numberOfPages: Int) {
-              generateStoryDraft(title: $title, description: $description, ageGroup: $ageGroup, writingStyle: $writingStyle, illustrationStyle: $illustrationStyle, numberOfPages: $numberOfPages) {
-                id
-                title
-                status
-                pdfStatus
-                lastStatus
-                createdAt
-              }
-            }
-          `,
-          variables: {
-            title: title.trim(),
-            description: description.trim(),
-            ageGroup: ageGroup,
-            writingStyle: writingStyle,
-            illustrationStyle: illustrationStyle,
-            numberOfPages: numberOfPages
-          }
-        })
-      });
-
-      const result = await response.json();
-      if (result.data) {
-        const newBook = result.data.generateStoryDraft;
-        setGeneratedBook(newBook);
-        // Pre-emptively add to live statuses
-        setLiveStatuses(prev => ({
-          ...prev,
-          [String(newBook.id)]: newBook.lastStatus || 'Connecting...'
-        }));
-        fetchBooks();
-      }
-    } catch (error) {
-      console.error('Error generating book:', error);
-    } finally {
-      setLoading(false);
-    }
+  const generateBook = async (bookData: any) => {
+    setGeneratedBook(bookData);
+    // Pre-emptively add to live statuses
+    setLiveStatuses(prev => ({
+      ...prev,
+      [String(bookData.id)]: bookData.lastStatus || 'Connecting...'
+    }));
+    fetchBooks();
   };
 
   const fetchBooks = useCallback(async () => {
@@ -314,7 +269,7 @@ export default function BookGenerator() {
 
   const finalizeBook = async () => {
     if (!editingBook) return;
-    setLoading(true);
+
     try {
       // 1. Update content
       await fetch('http://localhost:8080/graphql', {
@@ -362,8 +317,6 @@ export default function BookGenerator() {
       fetchBooks();
     } catch (error) {
       console.error('Error finalizing book:', error);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -429,6 +382,18 @@ export default function BookGenerator() {
       sources.forEach(s => s.close());
     };
   }, [activeBookIdsString, fetchBooks]);
+
+  if (showWizard) {
+    return (
+      <StoryWizard
+        onComplete={(bookData) => {
+          generateBook(bookData);
+          setShowWizard(false);
+        }}
+        onCancel={() => setShowWizard(false)}
+      />
+    );
+  }
 
   if (editingBook) {
     return (
@@ -525,7 +490,7 @@ export default function BookGenerator() {
                     <Button
                       variant="outline"
                       onClick={() => regeneratePageImage(page.pageNumber)}
-                      disabled={regeneratingPages[page.pageNumber] || loading}
+                      disabled={regeneratingPages[page.pageNumber]}
                       className="text-xs px-3 py-2"
                     >
                       {regeneratingPages[page.pageNumber] ? (
@@ -571,10 +536,9 @@ export default function BookGenerator() {
               </Button>
               <Button
                 onClick={finalizeBook}
-                disabled={loading}
                 className="flex-2 bg-cyan-vibrant text-slate-950 hover:bg-cyan-vibrant/90"
               >
-                {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Rocket className="mr-2 h-4 w-4" />}
+                <Rocket className="mr-2 h-4 w-4" />
                 Generate Pages & Illustrations
               </Button>
             </div>
@@ -611,106 +575,22 @@ export default function BookGenerator() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div>
-                <label className="block mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Story Title
-                </label>
-                <Input
-                  type="text"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g. The Little Magic Dragon"
-                  className="bg-slate-800/50 border-white/10"
-                />
-              </div>
-              <div>
-                <label className="block mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Short Description
-                </label>
-                <Textarea
-                  value={description}
-                  onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setDescription(e.target.value)}
-                  placeholder="What is the story about?"
-                  className="bg-slate-800/50 border-white/10"
-                />
-              </div>
-
-              <div className="flex gap-4">
-                <div className="flex-1">
-                  <label className="block mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Age Group
-                  </label>
-                  <Select value={ageGroup} onValueChange={setAgeGroup}>
-                    <SelectTrigger className="bg-slate-800/50 border-white/10">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="bg-slate-900 border-white/10 text-white">
-                      <SelectItem value="2-4 year old">2-4 years</SelectItem>
-                      <SelectItem value="5-8 year old">5-8 years</SelectItem>
-                      <SelectItem value="9-12 year old">9-12 years</SelectItem>
-                    </SelectContent>
-                  </Select>
+              <div className="text-center space-y-4">
+                <div className="w-16 h-16 bg-cyan-vibrant/20 rounded-full flex items-center justify-center mx-auto">
+                  <Sparkles className="w-8 h-8 text-cyan-vibrant" />
                 </div>
-                <div className="flex-1">
-                  <label className="block mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Pages
-                  </label>
-                  <Input
-                    type="number"
-                    min="1"
-                    max="10"
-                    value={numberOfPages}
-                    onChange={(e) => setNumberOfPages(parseInt(e.target.value) || 5)}
-                    className="bg-slate-800/50 border-white/10"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Writing Style
-                </label>
-                <Select value={writingStyle} onValueChange={setWritingStyle}>
-                  <SelectTrigger className="bg-slate-800/50 border-white/10">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-slate-900 border-white/10 text-white">
-                    <SelectItem value="happy and magical">Happy and Magical</SelectItem>
-                    <SelectItem value="adventurous and exciting">Adventurous and Exciting</SelectItem>
-                    <SelectItem value="educational and simple">Educational and Simple</SelectItem>
-                    <SelectItem value="bedtime story and calm">Bedtime Story and Calm</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="block mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Illustration Style
-                </label>
-                <Select value={illustrationStyle} onValueChange={setIllustrationStyle}>
-                  <SelectTrigger className="bg-slate-800/50 border-white/10">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-slate-900 border-white/10 text-white">
-                    <SelectItem value="storybook watercolor">Storybook Watercolor</SelectItem>
-                    <SelectItem value="cartoon">Cartoon</SelectItem>
-                    <SelectItem value="digital flat">Digital Flat</SelectItem>
-                    <SelectItem value="paper-cut">Paper-Cut</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <Button
-                onClick={generateBook}
-                disabled={loading || !title.trim()}
-                className="w-full bg-cyan-vibrant text-slate-950 hover:bg-cyan-vibrant/90 text-lg py-6 font-bold"
-              >
-                {loading ? (
-                  <Loader2 className="mr-2 h-6 w-6 animate-spin" />
-                ) : (
+                <p className="text-slate-300">
+                  Perfect for bedtime stories, gifts, and preschool learning.
+                  Create professionally formatted, illustrated kids storybooks with AI.
+                </p>
+                <Button
+                  onClick={() => setShowWizard(true)}
+                  className="w-full bg-cyan-vibrant text-slate-950 hover:bg-cyan-vibrant/90 text-lg py-6 font-bold"
+                >
                   <Rocket className="mr-2 h-6 w-6" />
-                )}
-                Generate Story Book
-              </Button>
+                  Start Creating
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -804,51 +684,82 @@ export default function BookGenerator() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className={cn(
-          "bg-slate-800/50 rounded-lg p-4 flex justify-between items-center gap-4 border-l-4",
+          "bg-slate-800/50 rounded-lg p-6 border-l-4",
           isCompleted && "border-green-500",
           isFailed && "border-red-500",
           isReviewPending && "border-cyan-vibrant",
           !isCompleted && !isFailed && !isReviewPending && "border-cyan-vibrant"
         )}
       >
-        <div className="flex-1">
-          <h3 className="font-bold">{book.title}</h3>
-          <div className="flex items-center gap-2 flex-wrap text-xs mt-2">
-            <Badge variant={getStatusVariant(book.status)}>{book.status}</Badge>
+        <div className="flex gap-6">
+          {/* Cover Preview */}
+          <div className="w-20 h-28 bg-slate-700 rounded-lg flex items-center justify-center flex-shrink-0">
+            {isCompleted ? (
+              <BookOpen className="w-8 h-8 text-green-400" />
+            ) : isFailed ? (
+              <div className="text-red-400 text-xs text-center">Failed</div>
+            ) : (
+              <div className="text-cyan-vibrant text-xs text-center">
+                {isReviewPending ? 'Review' : 'In Progress'}
+              </div>
+            )}
+          </div>
+
+          {/* Book Info */}
+          <div className="flex-1 min-w-0">
+            <h3 className="font-bold text-lg mb-2 truncate">{book.title}</h3>
+            <div className="flex items-center gap-2 flex-wrap mb-3">
+              <Badge variant={getStatusVariant(book.status)}>{book.status}</Badge>
+              {book.pdfStatus && book.pdfStatus !== 'NOT_STARTED' && (
+                <Badge variant={book.pdfStatus === 'COMPLETED' ? 'default' : 'secondary'}>
+                  PDF: {book.pdfStatus}
+                </Badge>
+              )}
+              {book.illustrationStyle && (
+                <Badge variant="outline">{book.illustrationStyle}</Badge>
+              )}
+            </div>
+
+            {showProgress && (
+              <div className="mb-4">
+                <p className="text-xs text-cyan-vibrant mb-2 animate-pulse">
+                  {liveStatuses[String(book.id)] || book.lastStatus || 'Connecting...'}
+                </p>
+                <Progress value={progress} className="h-2" />
+                <p className="text-xs font-mono text-right mt-1">{Math.round(progress)}%</p>
+              </div>
+            )}
+
+            <p className="text-xs text-slate-500">
+              Created {new Date(book.createdAt).toLocaleDateString()}
+            </p>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex flex-col gap-2 flex-shrink-0">
             {isReviewPending && (
               <Button size="sm" onClick={() => startReview(book.id)} className="bg-cyan-vibrant text-slate-950">
-                <Edit className="w-4 h-4 mr-2" /> Review
+                <Edit className="w-4 h-4 mr-2" /> Review Draft
               </Button>
             )}
-            <span className="text-slate-500">ID: #{book.id}</span>
-            {book.illustrationStyle && (
-              <span className="text-slate-500">Style: {book.illustrationStyle}</span>
+            {isCompleted && (
+              <Button size="sm" onClick={() => downloadBook(book.id)} className="bg-green-600 hover:bg-green-700">
+                <Download className="w-4 h-4 mr-2" /> Download PDF
+              </Button>
             )}
-            <span className="text-slate-500">{new Date(book.createdAt).toLocaleString()}</span>
+            {!isCompleted && !isReviewPending && !isFailed && (
+              <Button size="sm" variant="outline" disabled>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating...
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => deleteBook(book.id)}
+            >
+              <Trash2 className="w-4 h-4" />
+            </Button>
           </div>
-          {showProgress && (
-            <div className="mt-4">
-              <p className="text-xs text-cyan-vibrant mb-2 animate-pulse">{liveStatuses[String(book.id)] || book.lastStatus || 'Connecting...'}</p>
-              <Progress value={progress} className="h-2" />
-              <p className="text-xs font-mono text-right mt-1">{Math.round(progress)}%</p>
-            </div>
-          )}
-        </div>
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            onClick={() => downloadBook(book.id)}
-            disabled={book.pdfStatus !== 'COMPLETED'}
-          >
-            <Download className="w-4 h-4" />
-          </Button>
-          <Button
-            size="sm"
-            variant="destructive"
-            onClick={() => deleteBook(book.id)}
-          >
-            <Trash2 className="w-4 h-4" />
-          </Button>
         </div>
       </motion.div>
     );
